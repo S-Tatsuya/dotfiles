@@ -108,6 +108,9 @@
   #   enableSSHSupport = true;
   # };
   programs = {
+    git = {
+      enable = true;
+    };
     zsh = {
       enable = true;
     };
