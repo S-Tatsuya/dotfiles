@@ -83,6 +83,7 @@
     isNormalUser = true;
     description = "s.tatsuya0123";
     extraGroups = [ "networkmanager" "wheel" ];
+    shell = pkgs.zsh;
     packages = with pkgs; [
       kdePackages.kate
     #  thunderbird
@@ -106,6 +107,11 @@
   #   enable = true;
   #   enableSSHSupport = true;
   # };
+  programs = {
+    zsh = {
+      enable = true;
+    };
+  };
 
   # List services that you want to enable:
 
