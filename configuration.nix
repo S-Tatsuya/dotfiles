@@ -160,7 +160,7 @@
       noto-fonts-cjk-serif
       noto-fonts-cjk-sans
       noto-fonts-emoji
-      nerd-fonts.jetbrainsmono-nerd-font
+      nerd-fonts.fira-code
     ];
     fontDir.enable = true;
     fontconfig = {
