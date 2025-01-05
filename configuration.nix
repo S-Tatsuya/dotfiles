@@ -123,6 +123,14 @@
 	  };
 	}
       ];
+      keymap = [
+        {
+	  name = "Ctrl+H to Backspace";
+	  remap = {
+	    C-h = "Backspace";
+	  };
+	}
+      ];
     };
   };
 
