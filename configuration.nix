@@ -115,7 +115,7 @@
     userName = "s-tatsuya0123";
     serviceMode = "system";
     config = {
-      modemap = [
+      modmap = [
         {
 	  name = "CapsLock to Ctrl L";
 	  remap = {
