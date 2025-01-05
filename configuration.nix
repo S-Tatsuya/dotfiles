@@ -10,6 +10,7 @@
       ./hardware-configuration.nix
     ];
 
+  # UnfreePackageの利用を許可
   nixpkgs.config.allowUnfreePredicate = pkg:
     builtins.elem (lib.getName pkg) [
       "nvidia-x11"
@@ -104,6 +105,22 @@
     # use the example session manager (no others are packaged yet so this is enabled by default,
     # no need to redefine it in your config for now)
     #media-session.enable = true;
+  };
+
+  # xremapの設定
+  services.xremap = {
+    userName = "s-tatsuya0123";
+    serviceMode = "system";
+    config = {
+      modemap = [
+        {
+	  name = "CapsLock to Ctrl L";
+	  remap = {
+	    CapsLock = "Ctrl_L";
+	  };
+	}
+      ];
+    };
   };
 
   # Enable touchpad support (enabled default in most desktopManager).
