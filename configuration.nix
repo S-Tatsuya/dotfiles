@@ -61,6 +61,29 @@
 
   # Enable sound with pipewire.
   hardware.pulseaudio.enable = false;
+
+  # Nvidiea の設定
+  hardware.graphics = {
+    enable = true;
+  };
+
+  services.xserver.videoDrivers = ["nvidia"];
+
+  hardware.nvidia = {
+    modesetting.enable = true;
+    powerManagement.enable = false;
+    powerManagement.finegrained = false;
+    open = false;
+    nvidiaSettings = true;
+    package = config.boot.kernelPackages.nvidiaPackages.stable;
+  };
+
+  hardware.nvidia.prime = {
+    # intelBusId = "PCI:0:2:0";
+    nvidiaBusId = "PCI:1:0:0";
+  };
+
+
   security.rtkit.enable = true;
   services.pipewire = {
     enable = true;
