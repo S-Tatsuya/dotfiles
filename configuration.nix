@@ -132,7 +132,7 @@
 	}
 	{
 	  name = "Ctrl+M to Enter";
-	  rempa = {
+	  remap = {
 	    C-m = "Enter";
 	  };
 	}
