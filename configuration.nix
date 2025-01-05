@@ -130,6 +130,12 @@
 	    C-h = "Backspace";
 	  };
 	}
+	{
+	  name = "Ctrl+M to Enter";
+	  rempa = {
+	    C-m = "Enter";
+	  };
+	}
       ];
     };
   };
