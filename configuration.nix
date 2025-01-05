@@ -2,13 +2,21 @@
 # your system.  Help is available in the configuration.nix(5) man page
 # and in the NixOS manual (accessible by running ‘nixos-help’).
 
-{ inputs, config, pkgs, ... }:
+{ inputs, config, pkgs, lib, ... }:
 
 {
   imports =
     [ # Include the results of the hardware scan.
       ./hardware-configuration.nix
     ];
+
+  nixpkgs.config.allowUnfreePredicate = pkg:
+    builtins.elem (lib.getName pkg) [
+      "nvidia-x11"
+      "nvidia-settings"
+    ];
+  
+
 
   # Bootloader.
   boot.loader.systemd-boot.enable = true;
@@ -61,6 +69,29 @@
 
   # Enable sound with pipewire.
   hardware.pulseaudio.enable = false;
+
+  # Nvidiea の設定
+  hardware.graphics = {
+    enable = true;
+  };
+
+  services.xserver.videoDrivers = ["nvidia"];
+
+  hardware.nvidia = {
+    modesetting.enable = true;
+    powerManagement.enable = false;
+    powerManagement.finegrained = false;
+    open = false;
+    nvidiaSettings = true;
+    package = config.boot.kernelPackages.nvidiaPackages.stable;
+  };
+
+  hardware.nvidia.prime = {
+    # intelBusId = "PCI:0:2:0";
+    nvidiaBusId = "PCI:1:0:0";
+  };
+
+
   security.rtkit.enable = true;
   services.pipewire = {
     enable = true;
