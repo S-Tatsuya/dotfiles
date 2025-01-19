@@ -1,3 +1,4 @@
+{pkgs, ...}:
 {
   home = rec {
     username = "s-tatsuya0123";
