@@ -10,7 +10,7 @@
   home.packages = with pkgs; [
     bat
     bottom
-    exa
+    eza
     httpie
     pingu
     ripgrep
