@@ -15,5 +15,6 @@
     pingu
     ripgrep
     floorp
+    obsidian
   ];
 }
