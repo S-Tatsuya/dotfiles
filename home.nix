@@ -14,5 +14,6 @@
     httpie
     pingu
     ripgrep
+    floorp
   ];
 }
