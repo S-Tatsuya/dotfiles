@@ -22,6 +22,10 @@ in
       nixfmt-rfc-style
       # Markdown / YAML / TOML
       marksman
+      # mpls: markdown をブラウザにライブプレビューする LSP。
+      # discussions/11325 で紹介されている mdpls は開発が止まっており nixpkgs にも
+      # ないので、同じ discussion で後継として挙がっている mpls を使う。
+      mpls
       yaml-language-server
       taplo
       # TypeScript / JavaScript（vscode-langservers-extracted は HTML/CSS/JSON/ESLint）
@@ -48,11 +52,28 @@ in
       };
 
       keys.normal.esc = [ "collapse_selection" "keep_primary_selection" ];
+
+      # markdown のプレビューをブラウザで開く（mpls の workspace command）。
+      # mpls の README は C-m を例示しているが、端末では C-m = Enter なので使わない。
+      keys.normal.space.m = ":lsp-workspace-command open-preview";
     };
 
     # ~/.config/helix/languages.toml を生成する。
     languages = {
       language-server = {
+        # markdown のライブプレビュー用 LSP。テーマは editor 側の
+        # tokyonight_storm に合わせる。--no-auto を付けないとファイルを開いた
+        # 時点でブラウザが立ち上がるので、space+m で明示的に開く運用にする。
+        mpls = {
+          command = "mpls";
+          args = [
+            "--theme" "tokyonight-storm"
+            "--no-auto"
+          ]
+          # macOS では `open -a <browser>` に渡されるのでアプリ名で指定する。
+          # Linux では xdg-open（既定のブラウザ）に任せる。
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ "--browser" "Safari" ];
+        };
         # helix 同梱の定義は pylsp が既定なので明示的に上書きする。
         pyright = {
           command = "pyright-langserver";
@@ -73,7 +94,7 @@ in
         }
         {
           name = "markdown";
-          language-servers = [ "marksman" ];
+          language-servers = [ "marksman" "mpls" ];
           formatter = prettierWith "markdown";
           auto-format = true;
         }
