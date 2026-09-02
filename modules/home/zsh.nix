@@ -26,6 +26,19 @@
       # 大文字を明示的に入力した場合は大文字のみにマッチするので、
       # 完全な case-insensitive よりも候補が絞り込みやすい。
       zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
+
+      # 素の zsh は前方削除キー（Mac の fn + delete、フルサイズなら Delete）を
+      # どのキーマップにも割り当てていない。端末が送る CSI 3~ が未定義のままだと
+      # 途中まで読み捨てられ、末尾の `~` だけが行に挿入される。
+      # terminfo の kdch1 が引ければそれを使い（TERM ごとの差異を吸収できる）、
+      # zsh/terminfo が無い・値が空のときだけ xterm 系のリテラルへ倒す。
+      # `''${...}` は Nix の文字列補間を抑止して zsh にそのまま渡すためのエスケープ。
+      zmodload zsh/terminfo 2>/dev/null
+      if [[ -n ''${terminfo[kdch1]} ]]; then
+        bindkey -- "''${terminfo[kdch1]}" delete-char
+      else
+        bindkey -- '^[[3~' delete-char
+      fi
     '';
 
     # Plugin 関連の設定を追加
