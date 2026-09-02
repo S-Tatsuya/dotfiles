@@ -9,6 +9,7 @@
     ./fzf.nix
     ./bat.nix
     ./helix.nix
+    ./plantuml.nix
     ./ghostty.nix
   ];
 }
