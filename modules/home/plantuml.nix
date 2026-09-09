@@ -24,12 +24,14 @@
     # mpls 側はホストの差し替えだけで済む。
     #
     # 常駐 JVM なので待機中もメモリを数百 MB 使う。UML を書かない期間は
-    # enable = false にすればよい。
+    # enable = false（Linux は Install を消す）にすればよい。
     #
-    # launchd は darwin 専用。home-manager の launchd.enable は非 darwin で
-    # 既定 false になり、その場合 agents を定義しても plist は生成されず無視される。
-    # Linux で常駐させるなら systemd.user.services に同じことを書く必要がある。
-    launchd.agents.plantuml-server = {
+    # 常駐の仕組みは OS ごとに別物なので、同じプロセスを 2 通りに書く。
+    # macOS: launchd。home-manager の launchd.enable は非 darwin では既定 false で、
+    #   agents を定義しても plist が生成されず黙って無視される。
+    # Linux: systemd --user。Ubuntu は systemd が PID 1 なのでそのまま使える。
+    #   home-manager がアクティベーション時に daemon-reload と起動まで面倒を見る。
+    launchd.agents.plantuml-server = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
       enable = true;
       config = {
         ProgramArguments = [
@@ -41,6 +43,24 @@
         StandardOutPath = "${config.home.homeDirectory}/Library/Logs/plantuml-server.log";
         StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/plantuml-server.log";
       };
+    };
+
+    systemd.user.services.plantuml-server = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
+      Unit = {
+        Description = "PlantUML built-in HTTP server (for mpls markdown preview)";
+        # ローカル待ち受けだけなのでネットワーク到達性は要らないが、
+        # 起動順を安定させるために network.target の後にしておく。
+        After = [ "network.target" ];
+      };
+      Service = {
+        ExecStart = "${pkgs.plantuml}/bin/plantuml --http-server:${toString config.local.plantuml.port}";
+        # KeepAlive = true 相当。異常終了したら開け直す。
+        Restart = "on-failure";
+        RestartSec = 5;
+      };
+      # ログイン時に自動起動する（launchd の RunAtLoad = true 相当）。
+      # ログは journald に入るので `journalctl --user -u plantuml-server` で読む。
+      Install.WantedBy = [ "default.target" ];
     };
   };
 }

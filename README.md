@@ -1,10 +1,11 @@
-# M1 MacBook Pro をゼロから Nix で宣言的に管理する完全ガイド（2026年版）
+# M1 MacBook Pro と Ubuntu デスクトップを Nix で宣言的に管理する完全ガイド（2026年版）
 
 ## TL;DR
 
 - クリーンな M1 Mac には **公式 NixOS インストーラ（Nix Installer Working Group が維持する foundation-owned fork、`artifacts.nixos.org/nix-installer` に `--enable-flakes` を付与）で上流 Nix を入れる**のが最も競合の少ない選択。上流 Nix なら nix-darwin の `nix.enable = true`（既定）のまま nix.conf を管理でき、過去に苦しんだ Determinate 起因の `nix.enable = false` 分岐を避けられる。
 - nix-darwin は初回のみ `sudo nix run nix-darwin -- switch --flake ~/dotfiles#mac` でブートストラップし、以降は `sudo darwin-rebuild switch --flake ~/dotfiles#mac`。2025年の "The Plan" Phase 1（nix-darwin Issue #1457）以降、システムアクティベーションは root 実行が必須。home-manager は nix-darwin モジュールとして統合するのが現行推奨。
 - dotfiles は `flake.nix` + `hosts/`（ホスト別）+ `modules/darwin`・`modules/home`（機能別モジュール）+ `home/<user>.nix` に分割するのがメンテしやすい。Homebrew は最初は入れず、必要になってから nix-homebrew で宣言的に管理すると Nix と競合しない。
+- **Ubuntu 26.04（非 NixOS）は standalone home-manager で運用する**。システム層に相当する宣言的レイヤ（nix-darwin / NixOS モジュール）が存在しないので、ユーザー環境だけを `homeConfigurations."s-tatsuya@ubuntu"` が持ち、OS 側の下ごしらえ（Nix 本体・Docker・ログインシェル）は `scripts/ubuntu-bootstrap.sh` に閉じ込める。`modules/home` は両 OS で共有し、差分は `pkgs.stdenv.hostPlatform.isDarwin` / `isLinux` で分岐する。
 
 ## Key Findings
 
@@ -70,28 +71,43 @@ curl -sSfL https://artifacts.nixos.org/nix-installer | sh -s -- install --enable
 
 ```
 ~/dotfiles/
-├── flake.nix                 # エントリポイント（inputs と darwinConfigurations）
+├── flake.nix                 # エントリポイント（inputs / darwinConfigurations / homeConfigurations）
 ├── flake.lock                # 依存の固定（自動生成）
 ├── README.md
-├── hosts/
-│   └── mac/
-│       └── default.nix       # このホスト固有の nix-darwin 設定（primaryUser 等）
+├── hosts/                    # ホスト固有の設定
+│   ├── mac/
+│   │   └── default.nix       # nix-darwin 側の設定（primaryUser 等）
+│   └── ubuntu/
+│       └── default.nix       # Ubuntu デスクトップ固有の home-manager 設定
 ├── modules/
-│   ├── darwin/               # nix-darwin（システム）用モジュール
+│   ├── darwin/               # nix-darwin（システム）用モジュール。macOS 専用
 │   │   ├── default.nix       # 集約（imports）
 │   │   ├── nix.nix           # nix 設定・experimental-features
 │   │   ├── system.nix        # macOS system.defaults / Touch ID
-│   │   └── homebrew.nix      # （任意・後日）Homebrew 宣言
-│   └── home/                 # home-manager（ユーザー）用モジュール
+│   │   └── homebrew.nix      # Homebrew 宣言（GUI アプリ）
+│   └── home/                 # home-manager（ユーザー）用モジュール。両 OS 共通
 │       ├── default.nix       # 集約（imports）
+│       ├── linux.nix         # 非 NixOS Linux 用の受け皿（isLinux のときだけ有効）
 │       ├── packages.nix      # ユーザーパッケージ
 │       ├── git.nix           # アプリ別設定の例
 │       └── zsh.nix
-└── home/
-    └── s-tatsuya.nix         # ユーザー固有の home-manager エントリ
+├── home/
+│   └── s-tatsuya.nix         # ユーザー固有の home-manager エントリ（両 OS 共通）
+└── scripts/
+    └── ubuntu-bootstrap.sh   # Ubuntu 側の「Nix で管理できない部分」をまとめて実行
 ```
 
-新しいアプリ設定を足すときは `modules/home/<app>.nix` を作って `modules/home/default.nix` の imports に追加、システム機能なら `modules/darwin/<feature>.nix` を作って `modules/darwin/default.nix` に追加する。ホストを増やすときは `hosts/<name>/` を作り `flake.nix` の `darwinConfigurations` にエントリを足す。
+新しいアプリ設定を足すときは `modules/home/<app>.nix` を作って `modules/home/default.nix` の imports に追加、macOS 固有のシステム機能なら `modules/darwin/<feature>.nix` を作って `modules/darwin/default.nix` に追加する。ホストを増やすときは `hosts/<name>/` を作り、`flake.nix` の `darwinConfigurations` か `homeConfigurations` にエントリを足す。
+
+### 両 OS で 1 つの `modules/home` を共有する書き方
+
+`modules/home/*` は macOS からも Ubuntu からも読まれるので、OS 差はモジュールの中で吸収する。使い分けは 3 パターンしかない。
+
+1. **モジュールまるごと片方だけ**：ファイルの先頭で `lib.mkIf pkgs.stdenv.hostPlatform.isLinux { ... }` と包む（`modules/home/linux.nix`）。
+2. **一部の属性だけ足す**：`// lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin { ... }`（`ghostty.nix` の `macos-option-as-alt`）。
+3. **同じ目的を別の仕組みで実現する**：両方書いて片方を `mkIf` で消す（`plantuml.nix` の `launchd.agents` と `systemd.user.services`）。`launchd` / `systemd` のオプション自体は home-manager がどちらの OS でも宣言しているので、`mkIf` で false 側に倒せば評価は通り、生成物にも現れない。
+
+パスの分岐（`/Users` と `/home`）は `home/s-tatsuya.nix` の 1 箇所に閉じ込めてあるので、`hosts/*` 側では意識しなくてよい。
 
 ### 最小構成の flake.nix
 
@@ -405,8 +421,189 @@ sudo darwin-rebuild switch --flake ~/dotfiles#mac
 **運用を変える閾値：**
 
 - Homebrew でしか入らない GUI アプリが必要になったら → `nix-homebrew` を inputs に追加して宣言的管理へ移行。
-- 複数 Mac / Linux を管理し始めたら → `hosts/` にエントリを追加し、`modules/home` を共通化。
+- 複数 Mac / Linux を管理し始めたら → `hosts/` にエントリを追加し、`modules/home` を共通化。**（対応済み：Ubuntu デスクトップは次章）**
 - ビルドが極端に遅い（LLVM 等をソースビルドしてしまう）なら → `nixpkgs` の URL を `nixos-*` ではなく `nixpkgs-*-darwin` チャンネルに固定（Darwin バイナリがキャッシュされている）。
+
+## Ubuntu 26.04（デスクトップPC）のセットアップ
+
+### 方式：standalone home-manager
+
+Ubuntu は NixOS ではないので、macOS の nix-darwin にあたる「システム層の宣言的レイヤ」が存在しない。したがって役割を次のように割る。
+
+| 層 | macOS | Ubuntu 26.04 |
+| --- | --- | --- |
+| システム設定 | nix-darwin（`modules/darwin`） | **Nix の管轄外**。apt と systemd（`scripts/ubuntu-bootstrap.sh`） |
+| GUI アプリ | Homebrew cask（nix-homebrew で宣言） | nixpkgs か apt |
+| ユーザー環境 | home-manager（nix-darwin モジュールとして統合） | home-manager（standalone） |
+| 適用コマンド | `sudo darwin-rebuild switch --flake ~/dotfiles#mac` | `home-manager switch --flake ~/dotfiles#s-tatsuya@ubuntu` |
+
+`modules/home/*` は両方から読まれる共通資産で、OS 差はモジュール内で吸収する（前章「両 OS で 1 つの `modules/home` を共有する書き方」）。`nix-darwin` / `nix-homebrew` の input は `darwinConfigurations` からしか参照されないので、Ubuntu 側の評価では引かれない。
+
+### nixpkgs を 2 本持つ理由
+
+`flake.nix` の input は `nixpkgs`（`nixpkgs-26.05-darwin`）と `nixpkgs-linux`（`nixos-26.05`）の 2 本ある。
+
+`nixpkgs-*-darwin` は **Darwin のジョブセットが通ったコミットだけが進む**チャンネルで、Darwin のバイナリキャッシュが埋まっている代わりに、そのコミットの Linux 成果物がキャッシュに載っている保証がない。Linux 側から同じ input を使うと、条件次第で LLVM などをソースビルドし始める。同じ 26.05 系列の NixOS チャンネルを別 input として持ち、`homeConfigurations` にだけ渡すことでこれを避ける。
+
+実際に `cache.nixos.org` に問い合わせた結果（x86_64-linux）：
+
+| パッケージ | キャッシュ |
+| --- | --- |
+| ghostty 1.3.1 / helix 25.07.1 / plantuml 1.2026.3 / explex-nf 0.0.3 / starship 1.25.1 / zsh 5.9.1 | あり |
+| herdr 0.7.5 | **なし（ソースビルド）** |
+
+herdr は自前フレークで公開キャッシュを持たないため Rust のビルドが走る。これは macOS でも同じ（aarch64-darwin も未キャッシュ）なので、Linux 移行による新たな劣化ではない。初回の `home-manager switch` が数分かかる要因にはなる。
+
+### 手順
+
+**Step 1 — リポジトリを取得**
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/s-tatsuya/dotfiles.git ~/dotfiles
+```
+
+**Step 2 — ブートストラップスクリプトを実行**
+
+```bash
+~/dotfiles/scripts/ubuntu-bootstrap.sh
+```
+
+`sudo` を付けずに実行する（`$HOME` と `$USER` が root になってしまうため）。スクリプトの中で必要な箇所だけ `sudo` を呼ぶ。やっていることは 5 つで、いずれも冪等：
+
+1. apt の最小パッケージ（`ca-certificates` / `curl` / `git` / `gnupg` / `xz-utils` / `zsh`）。**zsh は Nix より先に入れる**。Nix のインストーラは「そのとき存在するシェルの設定ファイル」にプロファイル読み込みを差し込むので、順番が逆だと zsh 側だけ漏れる。
+2. Nix 本体（macOS と同じ公式インストーラ、`--enable-flakes`）。Ubuntu には nix-darwin がいないので、`/etc/nix/nix.conf` の内容はここで確定する（`nix.settings` を home-manager に書いても `~/.config/nix/nix.conf` に出るだけで daemon には効かない）。
+3. Docker Engine（次項）。
+4. ログインシェルを zsh に変更。
+5. `home-manager switch --flake ~/dotfiles#s-tatsuya@ubuntu`。初回は CLI がまだ無いので、代わりに自前の flake から `activationPackage` をビルドして `$out/activate` を直接叩く：
+
+   ```bash
+   act="$(nix build --no-link --print-out-paths \
+     '~/dotfiles#homeConfigurations."s-tatsuya@ubuntu".activationPackage')"
+   HOME_MANAGER_BACKUP_EXT=backup "$act/activate"
+   ```
+
+   `nix run github:nix-community/home-manager -- switch` でも動くが、あちらは home-manager 側の nixpkgs（nixos-unstable）まで引くので余計なダウンロードが増え、このリポジトリの `flake.lock` が固定している版ともズレる。`HOME_MANAGER_BACKUP_EXT=backup` は `switch -b backup` と同じ意味で、既存の `~/.zshenv` などを `.backup` 付きに退避してから symlink を張る。アクティベート後は `programs.home-manager.enable = true` により `home-manager` CLI が入るので、2 回目からは普通に `home-manager switch` でよい。
+6. `sudo non-nixos-gpu-setup`（次項）。
+
+**Step 3 — ログインし直す**
+
+次の 3 つはログインし直して初めて効く。
+
+- docker グループ（`sudo` なしの `docker`）
+- ログインシェルの zsh
+- `XDG_DATA_DIRS`（GNOME のアプリ一覧に Ghostty が出る。`systemd --user` は起動時にしか `~/.config/environment.d/` を読まない）
+
+**Step 4 — GitHub 認証（マシンごとに 1 回）**
+
+```bash
+gh auth login        # HTTPS → ブラウザ認証
+gh auth status
+```
+
+macOS ではトークンがキーチェーンに入るが、Ubuntu ではキーチェーンに相当するものが無いので `~/.config/gh/hosts.yml` に平文で保存される（パーミッションは 600）。ディスク暗号化を有効にしておくこと。
+
+**Step 5 — 動作確認**
+
+```bash
+home-manager --version
+ghostty --version
+docker run --rm hello-world                       # sudo なしで通ること
+fc-list | grep -i explex                          # フォントが見えていること
+systemctl --user status plantuml-server           # PlantUML サーバが動いていること
+readlink /run/opengl-driver                       # GPU 連携が設定されていること（空なら未設定）
+```
+
+**Step 6 — 以降の運用**
+
+```bash
+home-manager switch --flake ~/dotfiles#s-tatsuya@ubuntu
+```
+
+`nix flake update` は両 OS 共通の `flake.lock` を動かすので、どちらか一方で更新して push し、もう一方は pull してから switch する。
+
+### Docker（`sudo` なしで実行する）
+
+**Nix で管理しない。** `dockerd` はシステムの systemd サービスで、`/var/run/docker.sock` の所有権も `docker` グループの作成も root 権限が要る。NixOS なら `virtualisation.docker.enable` で宣言できるが、Ubuntu の standalone home-manager にはそれに相当するものが無い。よってブートストラップスクリプトの担当にする。
+
+インストール元は **Docker 公式 apt リポジトリ**（Ubuntu の `docker.io` ではない）。`docker compose` と `buildx` がプラグインとして付いてきて、バージョンも上流に追随するため。スクリプトは公式手順どおり、名前がぶつかるディストリ側のパッケージ（`docker.io` / `docker-compose` / `podman-docker` / `containerd` / `runc` …）を先に外し、`/etc/apt/keyrings/docker.asc` と deb822 形式の `/etc/apt/sources.list.d/docker.sources` を置いてから `docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin` を入れる。
+
+`sudo` なしで叩けるようにする部分：
+
+```bash
+sudo groupadd -f docker
+sudo usermod -aG docker "$USER"
+# 反映はログインし直してから（その場で試すなら newgrp docker）
+```
+
+> **`docker` グループ = 実質 root**。このグループに入ると、コンテナ経由でホストのファイルシステムを root 権限で読み書きできる（`docker run -v /:/host` など）。Docker 公式ドキュメントも明記している既知のトレードオフで、「`sudo` なしで実行する」という要件を満たす以上は避けられない。より強い分離が要るなら rootless モード（`dockerd-rootless-setuptool.sh install`）に切り替える選択肢もあるが、バインドマウント・ネットワーク・GPU 周りに制約が付く。
+
+**Ubuntu 26.04 のコードネームについて**：Docker のリポジトリは Ubuntu の新バージョンへの追随に時間差がある。スクリプトは `dists/<codename>/Release` の存在を確認し、無ければ `noble`（24.04 LTS）のパッケージへ自動的に落とす。手動で指定したいときは環境変数で上書きする：
+
+```bash
+DOCKER_APT_SUITE=noble ~/dotfiles/scripts/ubuntu-bootstrap.sh
+```
+
+### GPU ドライバ（非 NixOS 特有の一手間）
+
+**`home-manager switch` だけでは完結しない唯一の箇所**なので独立した節にする。
+
+非 NixOS では、Nix でビルドされた OpenGL / Vulkan アプリはホスト（Ubuntu）側の GPU ドライバをそのまま使えない。ライブラリの探索パスが `/nix/store` に閉じているためで、いわゆる nixGL 問題として知られている。home-manager 26.05 はこれを `targets.genericLinux.gpu` として取り込んでおり、`targets.genericLinux.enable = true` にすると `gpu.enable` も既定で true になって `non-nixos-gpu` パッケージが `home.packages` に入る。
+
+ただし実体の設置には root が要る（`/etc/tmpfiles.d/non-nixos-gpu.conf` を置いて `/run/opengl-driver` を張る）ため、home-manager のアクティベーションは**自動実行せず警告を出すだけ**：
+
+```
+This non-NixOS system is not yet set up to use the GPU with Nix packages.
+To set up GPU drivers, run
+  sudo /nix/store/.../bin/non-nixos-gpu-setup
+```
+
+`scripts/ubuntu-bootstrap.sh` は home-manager 適用のあとにこれを代わりに実行する（冪等）。手で流すなら：
+
+```bash
+sudo ~/.nix-profile/bin/non-nixos-gpu-setup
+```
+
+Ghostty は GPU 描画なので、飛ばすとソフトウェアレンダリングに落ちるか起動に失敗する。
+
+**NVIDIA プロプライエタリドライバの場合はこれだけでは足りない。** Nix 側に「ホストのカーネルモジュールと完全に同じバージョン」のユーザー空間ライブラリを用意する必要がある。`hosts/ubuntu/default.nix` にコメントアウト済みのひな型を置いてあるので、次の 2 つを埋めて有効にする。
+
+```bash
+nvidia-smi --query-gpu=driver_version --format=csv,noheader   # → version
+nix store prefetch-file \
+  https://download.nvidia.com/XFree86/Linux-x86_64/<VERSION>/NVIDIA-Linux-x86_64-<VERSION>.run   # → sha256
+```
+
+Intel / AMD（Mesa）なら `non-nixos-gpu-setup` を流すだけで完結する。ホスト側のドライバを更新したら、NVIDIA の場合はこの設定も追従させること（バージョンがズレると GL が動かなくなる）。
+
+### Ghostty（Ubuntu）
+
+本体は **nixpkgs の `ghostty` をそのまま使う**（apt にも公式 PPA にも無いので、Nix で入れるのが最も手数が少ない）。macOS 側が Homebrew cask なのは、nixpkgs の ghostty が `meta.platforms = *-linux` で darwin では評価が通らないという事情によるもので、`modules/home/ghostty.nix` は `package = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin null;` の 1 行だけでこの差を吸収している。
+
+- 設定ファイル（`~/.config/ghostty/config`）は両 OS 共通。macOS の Ghostty も XDG のパスを読む。
+- `macos-option-as-alt` だけは `lib.optionalAttrs isDarwin` で macOS 限定にしてある（Linux の Alt は最初から Alt として届く）。
+- ランチャー（GNOME の app grid）に出すには `XDG_DATA_DIRS` に `~/.nix-profile/share` が入っている必要がある。これは `modules/home/linux.nix` の `targets.genericLinux.enable` と `xdg.enable` を有効にすることで home-manager が `~/.config/environment.d/10-home-manager.conf` を生成して行う。**ここに自前で `XDG_DATA_DIRS` を書き足してはいけない**：同じファイルの後ろに追記される結果、home-manager が組み立てた行（`/usr/share/ubuntu` や `/var/lib/snapd/desktop` を含む）を上書きしてしまう。
+- `Ctrl+Alt+T` で開く既定のターミナルは GNOME 側の設定であり Nix の管轄外。必要なら GNOME の設定でカスタムキーバインドを割り当てる。
+
+### PlantUML サーバ（常駐プロセスの OS 差）
+
+`modules/home/plantuml.nix` は同じプロセス（`plantuml --http-server:45123`）を 2 通りに書いてある。
+
+- macOS：`launchd.agents.plantuml-server`（ログは `~/Library/Logs/plantuml-server.log`）
+- Ubuntu：`systemd.user.services.plantuml-server`（ログは `journalctl --user -u plantuml-server`）
+
+home-manager は `launchd` も `systemd` もどちらの OS でもオプションとして宣言しているので、`lib.mkIf` で片方を false に倒せば評価は通り、生成物には現れない。Helix 側（`mpls --plantuml-server`）はポート番号を `local.plantuml.port` オプション経由で共有しているだけなので OS 差はない。
+
+なお `systemd --user` が前提なので、systemd を持たない環境（既定の WSL など）ではこのサービスは動かない。
+
+### フォント
+
+`explex-nf` は `home.packages` に入れているが、OS から見えるようにする経路が違う。
+
+- macOS：home-manager が `~/Library/Fonts/HomeManager/` へ実体コピーする（macOS は symlink のフォントを認識しない）。探索は CoreText なので fontconfig は不要。
+- Ubuntu：fontconfig 経由。ただし `fonts.fontconfig.enable` の既定値は「NixOS の submodule として動いていて `useUserPackages` が有効」なときだけ true なので、standalone home-manager では **明示的に有効化しないと見つからない**。`modules/home/packages.nix` で `pkgs.stdenv.hostPlatform.isLinux` のとき true にしてある。
+
+確認は `fc-list | grep -i explex`。
 
 ## Caveats
 
@@ -416,6 +613,15 @@ sudo darwin-rebuild switch --flake ~/dotfiles#mac
 - **Determinate インストーラの README は表記が古い**：`--prefer-upstream-nix` が残っているが 2025年11月10日以降は実質無効。Determinate を選ぶなら nix-darwin 側で `nix.enable = false;` が必須。設定しないと `error: Determinate detected, aborting activation`（nix-darwin の modules/system/checks.nix が出す逐語メッセージ："Determinate uses its own daemon to manage the Nix installation that conflicts with nix-darwin's native Nix management. To turn off nix-darwin's management of the Nix installation, set: `nix.enable = false;`"）で中断する。この opt-out 機構は nix-darwin PR #1313（master）・#1326（24.11）で追加された。
 - **root 実行の副作用**：`sudo darwin-rebuild` は root で走るため、プライベートフレークや SSH 鍵を要する場合に鍵が見つからないことがある。nix-darwin Issue #1471 の逐語 "Now that darwin-rebuild requires using sudo, I am unable to access private flakes / git repos, as root does not have my ssh keys, so my system fails to build." のとおり既知の摩擦点。回避策として同 Issue で "`darwin-rebuild build --flake ~/flake.nix && sudo ./result/activate` seems to work okay"（ビルドはユーザーで、アクティベートのみ root で）が報告されている。
 - **秘密情報はリポジトリに置かない**：フレークの内容は world-readable な Nix ストアにコピーされる。SSH 鍵・API トークンは別管理（sops-nix 等）。
+- **`flake.lock` が root 所有になることがある**：`sudo darwin-rebuild` や `sudo nix flake update` の名残で、以降 `nix flake update` が `opening file "flake.lock": Permission denied` で落ちる。`sudo chown "$(id -un)" ~/dotfiles/flake.lock` で直す。
+- **`flake.lock` は両 OS 共有**：`nix flake update` はどちらか一方で実行して push し、もう一方は pull してから switch する。片方だけで更新し続けると、もう片方の switch のたびに差分が出る。
+- **Ubuntu 側のアーキテクチャは `x86_64-linux` 固定**：`flake.nix` の `linuxSystem` に書いてある。ARM のデスクトップ／ミニ PC を足すときは `aarch64-linux` に変えるか、ホストごとに分ける。
+- **`homeConfigurations` は macOS からはビルドできない**：評価（`nix eval`）は通るが、Linux のバイナリを darwin 上でビルドすることはできない。Mac 側で Ubuntu 用の設定を触ったときは、評価が通ることだけ確認して実機で switch する：
+  ```bash
+  nix eval --raw '.#homeConfigurations."s-tatsuya@ubuntu".activationPackage.drvPath'
+  ```
+- **GPU ドライバだけは `home-manager switch` で完結しない**：`/etc/tmpfiles.d` への設置に root が要るため、`sudo non-nixos-gpu-setup` を別途 1 回流す必要がある（詳細は前章）。NVIDIA を使う場合はホスト側のドライバ更新のたびに `hosts/ubuntu/default.nix` の追従も要る。
+- **Ubuntu には keychain が無い**：`gh` のトークンは `~/.config/gh/hosts.yml` に平文で置かれる（600）。ディスク暗号化前提で運用する。
 
 ## 一部のアプリはNixで管理しない
 
@@ -423,6 +629,10 @@ sudo darwin-rebuild switch --flake ~/dotfiles#mac
   - 更新の遅れを気にしての採用のため、公式インストーラを使った運用とする
 - Naya Flow は Nix でも Homebrew でも管理されていないキーボードのキーマップ変更GUIツールのため
 - HHKB のキーマップ変更ツールも Nix でも Homebrew でも管理されていないGUIツールのため
+- Docker Engine（Ubuntu）は dockerd がシステムの systemd サービスであり、`docker` グループの作成も含めて root 権限が要るため
+  - NixOS の `virtualisation.docker` に相当するものが Ubuntu + standalone home-manager には無い
+  - `scripts/ubuntu-bootstrap.sh` が Docker 公式 apt リポジトリから入れ、`usermod -aG docker` まで行う
+- Ubuntu のログインシェル（`chsh`）は `/etc/passwd` の書き換えなので同上。`~/.zshrc` の中身は home-manager が持つ
 
 ### Herdr のプラグインも Nix で管理しない
 

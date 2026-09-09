@@ -1,7 +1,10 @@
 { pkgs, ... }:
 {
-  # nix-darwin 側でも zsh を有効化しているが、home-manager 側でも
-  # 有効化すると direnv などのフックが確実に挿入される。
+  # ~/.zshrc は home-manager が生成するので、これが両 OS 共通の zsh 設定の実体になる。
+  # macOS では nix-darwin 側（modules/darwin/nix.nix）でも zsh を有効化しているが、
+  # home-manager 側でも有効化すると direnv などのフックが確実に挿入される。
+  # Ubuntu ではログインシェルの変更（chsh）だけが Nix の管轄外で、
+  # scripts/ubuntu-bootstrap.sh がやる。
   programs.zsh = {
     enable = true;
     enableCompletion = true;
